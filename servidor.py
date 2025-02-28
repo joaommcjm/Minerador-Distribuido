@@ -1,58 +1,100 @@
 import socket
-import ssl
-import threading  
+import threading
+import hashlib
+import json
+import time
 
-HOST = "localhost"  
-PORT = 31471
+# Configurações do servidor
+HOST = '127.0.0.1'
+PORTA = 31471
 
-# Lista para armazenar os clientes conectados
-clientes = []
+# Armazenamento de transações
+transacoes = {}
+clientes = {}
 
-def tratar_cliente(conn_ssl, addr):
-    #Função que lida com a comunicação com um cliente específico.
-    print(f"Cliente conectado: {addr}")
-    try:
-        while True:
-            dados = conn_ssl.recv(1024)
-            if not dados:  # Se não receber dados, desconecta o cliente
+def tratar_cliente(conn, addr):
+    print(f"Conexão de {addr} estabelecida.")
+    nome = conn.recv(10).decode('utf-8').strip()
+    clientes[nome] = conn
+
+    while True:
+        try:
+            dados = conn.recv(1024)
+            if not dados:
                 break
+            
+            # Processar mensagens do cliente
+            mensagem = json.loads(dados.decode('utf-8'))
+            if mensagem['tipo'] == 'G':
+                # Pedido de transação
+                if transacoes:
+                    # Enviar transação disponível
+                    id_transacao, dados_transacao = transacoes.popitem()
+                    resposta = criar_resposta_transacao(id_transacao, dados_transacao, nome)
+                    conn.send(resposta.encode('utf-8'))
+                else:
+                    # Não há transações disponíveis
+                    conn.send(json.dumps({'tipo': 'W'}).encode('utf-8'))
+            elif mensagem['tipo'] == 'S':
+                # Receber nonce encontrado
+                id_transacao = mensagem['id_transacao']
+                nonce = mensagem['nonce']
+                validar_nonce(id_transacao, nonce, nome)
+        except Exception as e:
+            print(f"Erro: {e}")
+            break
 
-            if dados.startswith(b"G"): 
-                nome_cliente = dados[1:11].decode().strip()  # Obtém o nome do cliente
-                print(f"Cliente {nome_cliente} solicitou uma transação")
-                enviar_transacao(conn_ssl)  # Envia resposta ao cliente
+    conn.close()
+    del clientes[nome]
+    print(f"Conexão de {addr} encerrada.")
 
-    except Exception as e:
-        print(f"Erro com cliente {addr}: {e}")  # Exibe erros, se ocorrerem
-    finally:
-        conn_ssl.close()  # Fecha a conexão com o cliente
-        print(f"Cliente {addr} desconectado")
+def criar_resposta_transacao(id_transacao, dados_transacao, nome):
+    # Montar a resposta para o cliente
+    resposta = {
+        'tipo': 'T',
+        'id_transacao': id_transacao,
+        'num_clientes': len(clientes),
+        'tamanho_janela': 1000000,  # Tamanho da janela de validação
+        'bits_zero': dados_transacao['bits_zero'],
+        'transacao': dados_transacao['transacao']
+    }
+    return json.dumps(resposta)
 
-def enviar_transacao(conn_ssl):
-    conn_ssl.sendall(b"W")  # Envia a mensagem "W" indicando que não há transação
-    print("Nenhuma transação disponível, tente novamente.")
+def validar_nonce(id_transacao, nonce, nome):
+    # Validação do nonce
+    dados_transacao = transacoes.get(id_transacao)
+    if dados_transacao:
+        transacao = dados_transacao['transacao']
+        bits_zero = dados_transacao['bits_zero']
+        entrada_hash = str(nonce).encode('utf-8') + transacao.encode('utf-8')
+        resultado_hash = hashlib.sha256(entrada_hash).hexdigest()
+        
+        if resultado_hash.startswith('0' * bits_zero):
+            # Notificar todos os clientes sobre o nonce válido
+            for cliente in clientes.values():
+                cliente.send(json.dumps({'tipo': 'I', 'id_transacao': id_transacao}).encode('utf-8'))
+            print(f"Nonce válido encontrado por {nome}: {nonce}")
+        else:
+            # Notificar o cliente que o nonce é inválido
+            clientes[nome].send(json.dumps({'tipo': 'R', 'id_transacao': id_transacao}).encode('utf-8'))
+    else:
+        print("Transação não encontrada.")
 
-def iniciar_servidor():
-    # Cria um contexto SSL para comunicação segura
-    contexto = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+def main():
+    global transacoes
+    # Inicializar transações para teste
+    transacoes[1] = {'transacao': 'Transação 1', 'bits_zero': 4}
+    transacoes[2] = {'transacao': 'Transação 2', 'bits_zero': 5}
 
-    # Carrega o certificado e a chave privada para o SSL/TLS
-    #contexto.load_cert_chain(certfile="cert.pem", keyfile="key.pem") (?)
-    contexto = ssl._create_unverified_context()  # Usa SSL sem exigir certificados
-    
-    # Criação do socket TCP
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-        server_socket.bind((HOST, PORT))
-        server_socket.listen()  # Habilita o servidor para aceitar conexões
-        print(f"Servidor ouvindo em {HOST}:{PORT}...")
+    # Criar socket
+    servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    servidor.bind((HOST, PORTA))
+    servidor.listen(5)
+    print(f"Servidor escutando em {HOST}:{PORTA}")
 
-        while True:
-            # Aguarda a conexão de um cliente
-            sock_cliente, addr = server_socket.accept()
-            conn_ssl = contexto.wrap_socket(sock_cliente, server_side=True)
-            # Adiciona o cliente à lista de clientes conectados
-            clientes.append(conn_ssl)
-            threading.Thread(target=tratar_cliente, args=(conn_ssl, addr)).start()
+    while True:
+        conn, addr = servidor.accept()
+        threading.Thread(target=tratar_cliente, args=(conn, addr)).start()
 
 if __name__ == "__main__":
-    iniciar_servidor()
+    main()

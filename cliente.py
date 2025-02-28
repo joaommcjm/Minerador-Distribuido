@@ -1,61 +1,47 @@
 import socket
-import ssl
+import json
+import hashlib
+import time
 
-HOST = "localhost"
-PORT = 31471
-
-# Solicitar nome do usuário e garantir que tenha 10 bytes
-nome = input("Digite seu nome (máx. 10 caracteres): ")[:10]
-NOME_CLIENTE = nome.encode().ljust(10, b' ')
-
-def conectar_ao_servidor():
-    try:
-        sock = socket.create_connection((HOST, PORT))  # Cria a conexão TCP
-        contexto = ssl.create_default_context()  # Cria um contexto SSL
-        sock_ssl = contexto.wrap_socket(sock, server_hostname=HOST)  # Aplica SSL na conexão
-        return sock_ssl
-    except Exception as e:
-        print(f"Erro ao conectar ao servidor: {e}")
-        return None
+# Configurações do cliente
+HOST = '127.0.0.1'
+PORTA = 31471
+NOME_CLIENTE = 'Cliente1'
 
 def solicitar_transacao(sock):
-    if not sock:
-        print("Conexão não estabelecida.")
-        return
-    
-    try:
-        mensagem = b"G" + NOME_CLIENTE
-        sock.sendall(mensagem)  # Envia a mensagem para o servidor
-        print("Solicitação de transação enviada...")
+    sock.send(NOME_CLIENTE.encode('utf-8').ljust(10))
+    while True:
+        sock.send(json.dumps({'tipo': 'G'}).encode('utf-8'))  # Pedido de transação
+        dados = sock.recv(1024)
+        mensagem = json.loads(dados.decode('utf-8'))
+
+        if mensagem['tipo'] == 'W':
+            print("Nenhuma transação disponível. Aguardando...")
+            time.sleep(10)  # Esperar 10 segundos antes de pedir novamente
+            continue
         
-        resposta = sock.recv(1024)  # Resposta do servidor
-        processar_resposta(resposta)
-    except Exception as e:
-        print(f"Erro ao solicitar transação: {e}")
+        # Processar resposta do servidor
+        id_transacao = mensagem['id_transacao']
+        num_clientes = mensagem['num_clientes']
+        tamanho_janela = mensagem['tamanho_janela']
+        bits_zero = mensagem['bits_zero']
+        transacao = mensagem['transacao']
+        print(f"Transação recebida: {transacao} (ID: {id_transacao})")
+        
+        # Tentar encontrar o nonce
+        for nonce in range(tamanho_janela):
+            entrada_hash = str(nonce).encode('utf-8') + transacao.encode('utf-8')
+            resultado_hash = hashlib.sha256(entrada_hash).hexdigest()
+            if resultado_hash.startswith('0' * bits_zero):
+                print(f"Nonce encontrado: {nonce} para a transação {id_transacao}")
+                sock.send(json.dumps({'tipo': 'S', 'id_transacao': id_transacao, 'nonce': nonce}).encode('utf-8'))
+                break
 
-def processar_resposta(resposta):
-    try:
-        if resposta.startswith(b"W"):
-            print("Nenhuma transação disponível. Espere um pouco e tente novamente.")
-        elif resposta.startswith(b"T"):
-            num_transacao = int.from_bytes(resposta[1:3], 'big')
-            num_clientes = int.from_bytes(resposta[3:5], 'big')
-            tam_janela = int.from_bytes(resposta[5:9], 'big')
-            bits_zero = int.from_bytes(resposta[9:10], 'big')
-            tam_transacao = int.from_bytes(resposta[10:14], 'big')
-            transacao = resposta[14:14+tam_transacao].decode(errors='ignore')  # Evita erro de decodificação
-            print(f"Recebida transação {num_transacao}: {transacao} ({bits_zero} bits zeros)")
-        else:
-            print("Resposta desconhecida do servidor.")
-    except Exception as e:
-        print(f"Erro ao processar resposta: {e}")
+def main():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((HOST, PORTA))
+    solicitar_transacao(sock)
+    sock.close()
 
-# Testando a conexão e solicitação de transação
 if __name__ == "__main__":
-    try:
-        sock = conectar_ao_servidor()
-        if sock:
-            solicitar_transacao(sock)
-            sock.close()
-    except Exception as e:
-        print(f"Erro na execução do cliente: {e}")
+    main()
