@@ -21,6 +21,7 @@ all_threads = []
 all_conn = []
 telegram_users = [chat_id]
 
+clientes_validando = {}
 transacoes_pendentes = []
 transacoes_validadas = []
 transacoes = {}  
@@ -121,7 +122,12 @@ def handle_client(conn, addr):
             data = conn.recv(1024).decode().strip()
             if not data:
                 break
-            
+            #####>>>>>>>>>>>>>>>>>>>>>>>>
+            # 
+            # 
+            # 
+            # 
+            # #
             with lock:
                 if data.startswith("/newtrans"):
                     _, transacao, bits_zero = data.split()
@@ -138,7 +144,12 @@ def handle_client(conn, addr):
         except Exception as e:
             print(f"Erro ao processar solicitação de {addr}: {e}")
             break
-    
+    ####
+    # 
+    # 
+    # 
+    # 
+    # #
     with lock:
         del clientes[nome]
     conn.close()
@@ -160,7 +171,13 @@ def process_request(my_conn, my_addr, type):
             num_transacao = my_conn.recv(2)
             nonce = my_conn.recv(4)
             processar_nonce(num_transacao, nonce, client_name)
-                
+        ######>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        # 
+        # 
+        # 
+        # 
+        # 
+        # #RESTO DO PROTOCOLO IMPLEMENTADO MAS N TESTADO        
         elif type == b'V':
             num_transacao = my_conn.recv(2)
             print(f"[INFO] Transação {int.from_bytes(num_transacao, 'big')} validada.")
@@ -177,7 +194,12 @@ def process_request(my_conn, my_addr, type):
             print(f"[INFO] Recebido comando de encerramento do servidor.")
             my_conn.close()
             return   
-        
+        ######
+        # 
+        # 
+        # 
+        # 
+        # #>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         else:
             print(f"[ERRO] Tipo de requisição desconhecido de {my_addr}: {type}")
 
@@ -192,6 +214,19 @@ def gerar_transacoes():
                 id_transacao = len(transacoes) + 1  # Gera um ID para a nova transação
                 transacao = f"Transação_{id_transacao}"
                 transacoes[id_transacao] = {'transacao': transacao, 'bits_zero': bits_zero}
+                ####################>>>>>>>>>>>>>>>>>>>>
+                # 
+                # 
+                # 
+                # 
+                # # MOSTRAR NUMERO DE LISTA JA VALIDANDO
+                clientes_validando[id_transacao] = []  # Inicializa a lista de clientes validando
+                ###################
+                # 
+                # 
+                # 
+                # 
+                # #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
                 print(f"Transação {id_transacao} adicionada.")
         except Exception as e:
             print(f"Erro ao adicionar transação: {e}.")
@@ -205,13 +240,25 @@ def enviar_transacao(conn):
                 if trans not in transacoes_validas:
                     id_transacao = trans
                     dados_transacao = transacoes[id_transacao]
-
+                    ######>>>>>>>>>>>>>>>>>>>>>>>
+                    # 
+                    # 
+                    # 
+                    #    
+                    # Envia a transação e o número de clientes validando                    
+                    num_clientes_validando = len(clientes_validando[id_transacao])
+                    break
+####
+# 
+# 
+# 
+# 
+# #<<<<<,,,,,,,,,,,,,,,,,,,,,<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         # Envia 'W' para indicar que não há transações disponíveis
         else:
             conn.send(b'W')  
             return
                 
-    
     transacao = dados_transacao['transacao'].encode('utf-8')  
     resposta = bytearray(b'T')                          # 'T' indica que é uma transação
     resposta.extend(id_transacao.to_bytes(2, 'big'))    # ID da transação (2 bytes)
@@ -221,7 +268,6 @@ def enviar_transacao(conn):
     resposta.extend(len(transacao).to_bytes(4, 'big'))  # Tamanho da transação (4 bytes)
     resposta.extend(transacao)                          # Dados da transação
     conn.send(resposta)                                 # Envia a transação ao cliente
-
 
 # Gerencia a comunicação com o cliente    
 def client(my_conn, my_addr):
@@ -271,7 +317,20 @@ def processar_nonce(num_transacao, nonce, nome):
         
         transacao = transacoes[num_transacao]['transacao']  # Obtém os dados da transação
         bits_zero = transacoes[num_transacao]['bits_zero']  # Obtém o critério de bits zero
-    
+        ########>>>>>>>>>>>>>>>>>>
+        # #
+        # 
+        # 
+        # 
+        #  ADICIONA O CLIENTE À LISTA DE VALIDAÇÃO
+        if nome not in clientes_validando[num_transacao]:
+            clientes_validando[num_transacao].append(nome)
+            ####
+            # 
+            # 
+            # 
+            # 
+            ###<<<<<<<<<<<<<<<<<<<<<<<<
     entrada_hash = nonce.to_bytes(4, 'big') + transacao.encode('utf-8')
     resultado_hash = hashlib.sha256(entrada_hash).hexdigest()  # Calcula o hash
     

@@ -101,7 +101,6 @@ def request_transaction(tcp_sock, client_name):
             time.sleep(10)
             continue
         
-
         if type == 'T': 
             id_transacao, nonce_encontrado = process_nonce(dados)
 
@@ -110,10 +109,30 @@ def request_transaction(tcp_sock, client_name):
                 print("Nonce enviado ao servidor!")
             else:
                 print("Nonce não encontrado.")
+                #>>>>>>>>>>>>>>>>>>>>>>>>>>
+                # 
+                # 
+                # 
+                #         
+################ Adicione a leitura do número de clientes validando
+        num_clientes_validando = int.from_bytes(dados[5:7], byteorder='big')  # Lê o número de clientes validando
+        print(f"Número de clientes validando a transação {id_transacao}: {num_clientes_validando}")
+##############################
+#
+#
+#
+#
+#
+#<<<<<<<<<<<<<<<<<<<<<<<<<
 
         if len(dados) >= 3:  # Garante que `dados` tenha ao menos 3 bytes antes da conversão
             id_transacao = int.from_bytes(dados[1:3], byteorder='big')  # Extrai o ID da transação corretamente
-
+#
+#
+#
+#
+#
+################### RESTO DO PROTOCOLO IMPLEMENTADO MAS NAO TESTADO ##########
         if type == 'V':
             print(f">>>>>>> Seu nonce foi validado para a transação {id_transacao}. <<<<<<<")
             print("[INFO] Validação confirmada pelo servidor.")
@@ -130,7 +149,11 @@ def request_transaction(tcp_sock, client_name):
             sys.exit(0)  # Encerra o cliente
         else:
             print("[ERRO] Dados recebidos são insuficientes para extrair id_transacao.")
-
+#
+#
+#
+#
+################# RESTO DO PROTOCOLO IMPLEMENTADO MAS N TESTADO
         time.sleep(10)
 
 def startClient():
