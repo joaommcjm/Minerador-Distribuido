@@ -11,11 +11,10 @@ porta = 31471
 ultima_mensagem = None
 lock = threading.Lock()  # Controle de acesso à variável compartilhada
 
-
 # Função para requisitar o nome do cliente
 def get_client_name():
     while True:
-        nome = input("Digite seu nome (máx. 10 caracteres):\m >>>> ").strip()
+        nome = input("Digite seu nome (máx. 10 caracteres):\n >>>> ").strip()
         if 1 <= len(nome) <= 10:
             if nome.isalpha():
                 return nome.ljust(10)  # Ajusta a variável para ter exatamente 10 caracteres
@@ -35,13 +34,62 @@ def listen_server(tcp_sock):
                 print("Servidor desconectado. Encerrando cliente.")
                 sys.exit(1)
 
+            print(f"[Servidor~] {dados.decode('utf-8')}")
+
             # Garante que apenas uma thread acessa a última mensagem
             with lock:
                 ultima_mensagem = dados  # Armazena a mensagem recebida
         except Exception as e:
             print(f"[ERRO] Falha ao receber mensagem do servidor: {e}")
             break
-
+##
+# 
+# 
+# 
+# 
+# 
+# #
+def user_command_interface(tcp_sock):
+    while True:
+        # Solicita ao usuário que insira um comando
+        command = input("Digite um comando (/newtrans, /validtrans, /pendtrans, /clients): ").strip()
+        
+        if command.startswith("/newtrans"):
+            # O usuário deve informar a transação e os bits zero
+            transacao = input("Informe a transação a validar: ")
+            bits_zero = input("Informe o número de bits zero necessários: ")
+            msg = f"/newtrans {transacao} {bits_zero}"
+            tcp_sock.sendall(msg.encode("utf-8"))
+        
+        elif command == "/validtrans":
+            msg = "/validtrans"
+            tcp_sock.sendall(msg.encode("utf-8"))
+        
+        elif command == "/pendtrans":
+            msg = "/pendtrans"
+            tcp_sock.sendall(msg.encode("utf-8"))
+        
+        elif command == "/clients":
+            msg = "/clients"
+            tcp_sock.sendall(msg.encode("utf-8"))
+        
+        else:
+            print("Comando inválido! Tente novamente.")
+        
+        # Aguarda a resposta do servidor
+        try:
+            response = tcp_sock.recv(1024).decode("utf-8")
+            print(f"[Servidor] {response}")
+        except Exception as e:
+            print(f"[ERRO] Falha ao receber resposta do servidor: {e}")
+            break
+        ###
+        # 
+        # 
+        # 
+        # 
+        # 
+        # #
 
 # Processa os dados da transação recebida e realiza a prova de trabalho (mineração).
 def process_nonce(dados) -> tuple:
@@ -52,13 +100,22 @@ def process_nonce(dados) -> tuple:
     tamanho_janela = int.from_bytes(dados[5:9], byteorder='big')   
     bits_zero = dados[9]                                            
     tam_transacao = int.from_bytes(dados[10:14], byteorder='big')   
-    transacao = dados[14:14 + tam_transacao].decode('utf-8')       
+    transacao = dados[14:14 + tam_transacao].decode('utf-8')        
 
-    print(f"Transação recebida: {transacao} (ID: {id_transacao})")
+    print(f"\nTransação recebida: {transacao} (ID: {id_transacao})")
+    print(f"id_transacao: {id_transacao}")
+    print(f"num_cliente: {num_cliente}")
+    print(f"tamanho_janela: {tamanho_janela}")
+    print(f"bits_zero: {bits_zero}")
+    print(f"tam_transacao: {tam_transacao}")
+    print(f"transacao: {transacao}")
     
     # Tenta achar o hash válido que corresponda ao nonce + transação
     nonce_encontrado = None
-    for nonce in range(tamanho_janela):                             
+    start = tamanho_janela
+    end = start + 1000000
+    for nonce in range(start, end):
+        print(f"Procurando nonce: {nonce}")                             
         nonce_bytes = nonce.to_bytes(4, byteorder='big')         
         entrada_hash = nonce_bytes + transacao.encode('utf-8')  
         resultado_hash = hashlib.sha256(entrada_hash).hexdigest()   
@@ -101,6 +158,7 @@ def request_transaction(tcp_sock, client_name):
             time.sleep(10)
             continue
         
+
         if type == 'T': 
             id_transacao, nonce_encontrado = process_nonce(dados)
 
@@ -109,30 +167,10 @@ def request_transaction(tcp_sock, client_name):
                 print("Nonce enviado ao servidor!")
             else:
                 print("Nonce não encontrado.")
-                #>>>>>>>>>>>>>>>>>>>>>>>>>>
-                # 
-                # 
-                # 
-                #         
-################ Adicione a leitura do número de clientes validando
-        num_clientes_validando = int.from_bytes(dados[5:7], byteorder='big')  # Lê o número de clientes validando
-        print(f"Número de clientes validando a transação {id_transacao}: {num_clientes_validando}")
-##############################
-#
-#
-#
-#
-#
-#<<<<<<<<<<<<<<<<<<<<<<<<<
 
         if len(dados) >= 3:  # Garante que `dados` tenha ao menos 3 bytes antes da conversão
             id_transacao = int.from_bytes(dados[1:3], byteorder='big')  # Extrai o ID da transação corretamente
-#
-#
-#
-#
-#
-################### RESTO DO PROTOCOLO IMPLEMENTADO MAS NAO TESTADO ##########
+
         if type == 'V':
             print(f">>>>>>> Seu nonce foi validado para a transação {id_transacao}. <<<<<<<")
             print("[INFO] Validação confirmada pelo servidor.")
@@ -143,17 +181,13 @@ def request_transaction(tcp_sock, client_name):
         elif type == 'I':
             print(f"Um outro cliente encontrou um nonce para a transação {id_transacao}. Abortando tentativa atual...")
             print("[INFO] Processamento interrompido.")
-
+        
         if type == 'Q':
             print("Servidor encerrando conexões. Saindo...")
             sys.exit(0)  # Encerra o cliente
         else:
-            print("[ERRO] Dados recebidos são insuficientes para extrair id_transacao.")
-#
-#
-#
-#
-################# RESTO DO PROTOCOLO IMPLEMENTADO MAS N TESTADO
+            print("[ERRO] Dados recebidos são insuficientes para extrair type.")
+
         time.sleep(10)
 
 def startClient():
@@ -173,16 +207,20 @@ def main():
     # Cria as threads
     thread_listen = threading.Thread(target=listen_server, args=(tcp_sock,), daemon=True)
     thread_user_request = threading.Thread(target=request_transaction, args=(tcp_sock, client_name), daemon=True)
+    thread_user_command = threading.Thread(target=user_command_interface, args=(tcp_sock,), daemon=True)
     #thread_server = threading.Thread(target=serverMessages(tcp_sock), daemon=True)
 
     print(f"Conectado em: {host, porta}")
 
     try: 
+        thread_listen.start()
         thread_user_request.start()
-        #thread_server.start()
+        thread_user_command.start()
 
+        thread_listen.join()
         thread_user_request.join()
-        #thread_server.join()
+        thread_user_command.join()
+        
     except KeyboardInterrupt as e:
         print ("Finalizando por Cntl-C.") 
 
