@@ -14,7 +14,6 @@ OFFSET = 0
 chat_id = 670371979
 
 HOST = 'localhost'
-HOST = '10.24.13.218'
 PORT = 31471
 all_conn = []
 all_threads = []
@@ -183,7 +182,9 @@ def enviar_transacao(conn, client_name):
     #print("Enviando transação.")
 
     global tentativas
+
     with lock:
+        
         # Verifica se existem transações
         if transacoes:
             transacao_pendente = False
@@ -193,7 +194,12 @@ def enviar_transacao(conn, client_name):
                     id_transacao = trans
                     dados_transacao = transacoes[id_transacao]
                     transacao_pendente = True
+
+                    transacoes[id_transacao]['clientes_validando'].append(client_name)
+                    local_tentativas = tentativas
+                    tentativas += 1
                     break
+            
 
             # Envia 'W' caso todas as transações já estejam validadas
             if not transacao_pendente:
@@ -204,12 +210,11 @@ def enviar_transacao(conn, client_name):
             conn.send(b'W')  
             return
 
-    
     transacao = dados_transacao['transacao'].encode('utf-8')  
     resposta = bytearray(b'T')                          # 'T' indica que é uma transação
     resposta.extend(id_transacao.to_bytes(2, 'big'))    # ID da transação (2 bytes)
     resposta.extend(len(clientes).to_bytes(2, 'big'))   # Número de clientes conectados (2 bytes)
-    resposta.extend((1000000 * tentativas).to_bytes(4, 'big'))       # Janela de validação (4 bytes)
+    resposta.extend((1000000 * local_tentativas).to_bytes(4, 'big'))       # Janela de validação (4 bytes)
     resposta.append(dados_transacao['bits_zero'])       # Número de bits zero necessários
     resposta.extend(len(transacao).to_bytes(4, 'big'))  # Tamanho da transação (4 bytes)
     resposta.extend(transacao)                          # Dados da transação
@@ -217,12 +222,10 @@ def enviar_transacao(conn, client_name):
     
     # Adiciona o cliente no dicionario de transações
 
-    transacoes[id_transacao]['clientes_validando'].append(client_name)
-
-    print(f"Enviando transação: \n{resposta}")
+    print(f"\nEnviando transação: \n{resposta}")
     print("--------------------\n")
 
-    tentativas += 1
+
 
 # Gerencia a comunicação com o cliente    
 def client(my_conn, my_addr):
@@ -275,8 +278,7 @@ def processar_nonce(num_transacao, nonce, nome):
             transacoes_validas[num_transacao] = {'nonce': nonce, 'cliente': nome}  # Registra a transação validada
 
         print(f"\nNonce válido encontrado por {nome}: {nonce}")
-        clientes[nome].send(f"V {num_transacao}".encode('utf-8'))  # Informa ao cliente que o nonce foi validado
-        
+        clientes[nome].send(f"V{num_transacao}".encode('utf-8'))  # Informa ao cliente que o nonce foi validado
         with lock:
             for outro_nome, conexao in clientes.items():  # Notifica os outros clientes
 
@@ -391,10 +393,22 @@ def processar_comando(comando, chat_id=None) -> str:
     resposta = ""
     with lock:
         if comando == "/newtrans":
+            # Se processar comando não é invocado pelo telegram
             if not chat_id:
                 transacao = input("Digite a transação a validar: ").strip()
-                bits_zero = int(input("Número de bits zero necessários: ").strip())
-                gerar_transacoes(transacao, bits_zero)
+
+                try:
+                    bits_zero = int(input("Número de bits zero necessários: ").strip())
+                except:
+                    resposta = "Número de bits zero inválido."
+                    return resposta
+                    
+
+                if transacao.isalpha() and type(bits_zero) == int:
+                    gerar_transacoes(transacao, bits_zero)
+                else:
+                    resposta = "Nome da transação inválida."
+
             else:
                 resposta = "Comando inválido para o usuário Telegram."
         elif comando == "/validtrans":

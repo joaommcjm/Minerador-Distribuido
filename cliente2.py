@@ -38,11 +38,9 @@ def listen_server(tcp_sock):
             # Garante que apenas uma thread acessa a última mensagem
             with lock:
                 type = dados[0:1]
-
                 # Servidor responde protocolo T enviando uma nova transação
                 if type == b'T':  
                     ultima_mensagem = dados
-                    print("ultima mensagem atualizada")
 
                 # Servidor responde protocolo W (não há transações disponíveis)
                 if type == b'W':  
@@ -61,11 +59,6 @@ def listen_server(tcp_sock):
                 elif type == b'R':
                     print(f"[INFO] Seu nonce foi rejeitado para a transação {int.from_bytes(dados[1:3], 'big')}.")
 
-                # Servidor informa que está fechando conexão
-                elif type == b'Q':
-                    print("[INFO] Servidor encerrando. Fechando conexão.")
-                    tcp_sock.close()
-                    sys.exit(0)
 
 
         except Exception as e:
@@ -84,24 +77,26 @@ def request_transaction(tcp_sock, client_name):
         tcp_sock.sendall(msg)
         print(f"[INFO] Solicitação de transação enviada: {msg.decode()}")
 
-        while ultima_mensagem is None:
-            print("Servidor sem transações disponíveis. Tentando novamente...")
-            time.sleep(10)
-            continue
+        #while ultima_mensagem is None:
+        #    time.sleep(10)
+        #    print("Servidor sem transações disponíveis. Tentando novamente...")
+            
 
         with lock:
-            dados = ultima_mensagem
-            ultima_mensagem = None  # Limpa a variável para evitar reutilização indevida
+            if ultima_mensagem is not None:
+                dados = ultima_mensagem
+                ultima_mensagem = None  # Limpa a variável para evitar reutilização indevida
 
-        parar_mineracao = False
-        id_transacao, nonce_encontrado = process_nonce(dados)
+                parar_mineracao = False
+                id_transacao, nonce_encontrado = process_nonce(dados)
 
-        if nonce_encontrado is not None:
-            tcp_sock.send(b'S' + id_transacao.to_bytes(2, byteorder='big') + nonce_encontrado.to_bytes(4, byteorder='big'))
-            print("Nonce enviado ao servidor!")
-        else:
-            print("Nonce não encontrado.")
+                if nonce_encontrado is not None:
+                    tcp_sock.send(b'S' + id_transacao.to_bytes(2, byteorder='big') + nonce_encontrado.to_bytes(4, byteorder='big'))
+                    print("Nonce enviado ao servidor!")
+                else:
+                    print("Nonce não encontrado.")
 
+        time.sleep(10)
 # Processa os dados da transação recebida e realiza a prova de trabalho (mineração).
 def process_nonce(dados) -> tuple:
 
