@@ -11,6 +11,7 @@ porta = 31471
 ultima_mensagem = None
 lock = threading.Lock()  # Controle de acesso à variável compartilhada
 
+
 # Função para requisitar o nome do cliente
 def get_client_name():
     while True:
@@ -34,62 +35,13 @@ def listen_server(tcp_sock):
                 print("Servidor desconectado. Encerrando cliente.")
                 sys.exit(1)
 
-            print(f"[Servidor~] {dados.decode('utf-8')}")
-
             # Garante que apenas uma thread acessa a última mensagem
             with lock:
                 ultima_mensagem = dados  # Armazena a mensagem recebida
         except Exception as e:
             print(f"[ERRO] Falha ao receber mensagem do servidor: {e}")
             break
-##
-# 
-# 
-# 
-# 
-# 
-# #
-def user_command_interface(tcp_sock):
-    while True:
-        # Solicita ao usuário que insira um comando
-        command = input("Digite um comando (/newtrans, /validtrans, /pendtrans, /clients): ").strip()
-        
-        if command.startswith("/newtrans"):
-            # O usuário deve informar a transação e os bits zero
-            transacao = input("Informe a transação a validar: ")
-            bits_zero = input("Informe o número de bits zero necessários: ")
-            msg = f"/newtrans {transacao} {bits_zero}"
-            tcp_sock.sendall(msg.encode("utf-8"))
-        
-        elif command == "/validtrans":
-            msg = "/validtrans"
-            tcp_sock.sendall(msg.encode("utf-8"))
-        
-        elif command == "/pendtrans":
-            msg = "/pendtrans"
-            tcp_sock.sendall(msg.encode("utf-8"))
-        
-        elif command == "/clients":
-            msg = "/clients"
-            tcp_sock.sendall(msg.encode("utf-8"))
-        
-        else:
-            print("Comando inválido! Tente novamente.")
-        
-        # Aguarda a resposta do servidor
-        try:
-            response = tcp_sock.recv(1024).decode("utf-8")
-            print(f"[Servidor] {response}")
-        except Exception as e:
-            print(f"[ERRO] Falha ao receber resposta do servidor: {e}")
-            break
-        ###
-        # 
-        # 
-        # 
-        # 
-        # 
-        # #
+
 
 # Processa os dados da transação recebida e realiza a prova de trabalho (mineração).
 def process_nonce(dados) -> tuple:
@@ -114,11 +66,15 @@ def process_nonce(dados) -> tuple:
     nonce_encontrado = None
     start = tamanho_janela
     end = start + 1000000
+
     for nonce in range(start, end):
-        print(f"Procurando nonce: {nonce}")                             
+        print(f"Procurando nonce no range ({start}, {end}): {nonce}")                             
         nonce_bytes = nonce.to_bytes(4, byteorder='big')         
         entrada_hash = nonce_bytes + transacao.encode('utf-8')  
-        resultado_hash = hashlib.sha256(entrada_hash).hexdigest()   
+        resultado_hash = hashlib.sha256(entrada_hash).digest()   
+
+        # Converte o hash para binário e verifica os bits iniciais
+        resultado_hash = bin(int.from_bytes(resultado_hash, 'big'))[2:].zfill(256)
 
         if resultado_hash.startswith('0' * bits_zero):              
             nonce_encontrado = nonce
@@ -181,10 +137,6 @@ def request_transaction(tcp_sock, client_name):
         elif type == 'I':
             print(f"Um outro cliente encontrou um nonce para a transação {id_transacao}. Abortando tentativa atual...")
             print("[INFO] Processamento interrompido.")
-        
-        if type == 'Q':
-            print("Servidor encerrando conexões. Saindo...")
-            sys.exit(0)  # Encerra o cliente
         else:
             print("[ERRO] Dados recebidos são insuficientes para extrair type.")
 
@@ -207,7 +159,6 @@ def main():
     # Cria as threads
     thread_listen = threading.Thread(target=listen_server, args=(tcp_sock,), daemon=True)
     thread_user_request = threading.Thread(target=request_transaction, args=(tcp_sock, client_name), daemon=True)
-    thread_user_command = threading.Thread(target=user_command_interface, args=(tcp_sock,), daemon=True)
     #thread_server = threading.Thread(target=serverMessages(tcp_sock), daemon=True)
 
     print(f"Conectado em: {host, porta}")
@@ -215,12 +166,9 @@ def main():
     try: 
         thread_listen.start()
         thread_user_request.start()
-        thread_user_command.start()
 
         thread_listen.join()
         thread_user_request.join()
-        thread_user_command.join()
-        
     except KeyboardInterrupt as e:
         print ("Finalizando por Cntl-C.") 
 
