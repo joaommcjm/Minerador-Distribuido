@@ -43,6 +43,10 @@ def listen_server(tcp_sock):
                     parar_mineracao = True
                 elif dados [0:1] == b'R':
                     print(f">>>>>>> Seu nonce foi rejeitado para a transação {int.from_bytes(dados[1:3], 'big')}. <<<<<<<")
+                elif dados [0:1] == b'Q':
+                    print("Servidor encerrando. Fechando conexão.")
+                    tcp_sock.close()
+                    sys.exit(0)
 
         except Exception as e:
             print(f"[ERRO] Falha ao receber mensagem do servidor: {e}")

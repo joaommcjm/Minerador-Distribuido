@@ -417,6 +417,28 @@ def interface_usuario():
 
         #input("\nPressione Enter para continuar...")
         #os.system('cls' if os.name == 'nt' else 'clear')
+def shutdown_server(sock):
+    """ Encerra o servidor enviando 'Q' para os clientes e fechando conexões. """
+    print("\n[INFO] Encerrando servidor...")
+
+    # Envia 'Q' para todos os clientes conectados antes de encerrar
+    for cliente in all_conn:
+        try:
+            cliente.sendall(b'Q')  # Mensagem de encerramento
+            cliente.close()         # Fecha a conexão
+        except Exception as e:
+            print(f"[ERRO] Falha ao fechar conexão com cliente: {e}")
+
+    sock.close()  # Fecha o socket do servidor
+    print("[INFO] Servidor encerrado.")
+    sys.exit(0)
+
+def server_input_listener(sock):
+    """ Thread que escuta comandos do usuário no terminal. """
+    while True:
+        comando = input()
+        if comando.strip().upper() == "Q":
+            shutdown_server(sock)
 
 def main():
     print("Iniciando servidor...") 
@@ -425,21 +447,35 @@ def main():
 
     thread_interface = threading.Thread(target=interface_usuario, daemon=True)
     thread_interface.start()
+    
+    thread_interface = threading.Thread(target=server_input_listener, args=(sock,), daemon=True)
+    thread_interface.start()
 
     # Inicia a thread para ouvir as mensagens do Telegram
     #print("Iniciando thread para escutar mensagens do telegram...\n")
     #threading.Thread(target=telegram_listener, daemon=True).start()
-
-    while True:
-        try:
+    
+    try:
+        while True:
             conn, addr = sock.accept()
             t = threading.Thread(target=process_client, args=(conn, addr))
             all_threads.append(t)
             t.start()
-        except Exception as e: 
-            print(f"Erro ao aceitar conexão: {e}")
-            break
+    except KeyboardInterrupt: 
+        print("\nEncerrando servidor...")
+            
+
+                # Enviar mensagem 'Q' para todos os clientes antes de encerrar
+        for cliente in all_conn:
+            try:
+                cliente.sendall(b'Q')  # Indica que o servidor está fechando
+                cliente.close()
+            except:
+                pass  # Ignora erros se o cliente já tiver desconectado
         
+        sock.close()
+        print("Servidor encerrado.")
+        sys.exit(0)
     for t in all_threads:
         t.join()  # recolhe os processadores antes de fechar
     sock.close()
