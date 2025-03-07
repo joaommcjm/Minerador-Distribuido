@@ -10,7 +10,7 @@ porta = 31471
 # Variável global para armazenar mensagens do servidor
 ultima_mensagem = None
 lock = threading.Lock()  # Controle de acesso à variável compartilhada
-
+parar_mineracao = False
 
 # Função para requisitar o nome do cliente
 def get_client_name():
@@ -26,7 +26,7 @@ def get_client_name():
 
 # Thread que escuta mensagens do servidor
 def listen_server(tcp_sock):
-    global ultima_mensagem
+    global ultima_mensagem, parar_mineracao
 
     while True:
         try:
@@ -38,13 +38,19 @@ def listen_server(tcp_sock):
             # Garante que apenas uma thread acessa a última mensagem
             with lock:
                 ultima_mensagem = dados  # Armazena a mensagem recebida
+                if dados[0:1] == b'I':
+                    #print(f"[INFO] Outro cliente encontrou o nonce para a transação {int.from_bytes(dados[1:3], 'big')}.")
+                    parar_mineracao = True
+                elif dados [0:1] == b'R':
+                    print(f">>>>>>> Seu nonce foi rejeitado para a transação {int.from_bytes(dados[1:3], 'big')}. <<<<<<<")
+
         except Exception as e:
             print(f"[ERRO] Falha ao receber mensagem do servidor: {e}")
             break
 
-
 # Processa os dados da transação recebida e realiza a prova de trabalho (mineração).
 def process_nonce(dados) -> tuple:
+    global parar_mineracao
 
     # Decodifica os bytes de acordo com o protocolo
     id_transacao = int.from_bytes(dados[1:3], byteorder='big')      
@@ -64,10 +70,13 @@ def process_nonce(dados) -> tuple:
     
     # Tenta achar o hash válido que corresponda ao nonce + transação
     nonce_encontrado = None
-    start = tamanho_janela
-    end = start + 1000000
+    start, end = tamanho_janela, tamanho_janela + 1000000
 
     for nonce in range(start, end):
+        if parar_mineracao:
+            print("[INFO] Mineração interrompida por notificação do servidor. [I].")
+            return id_transacao, None
+        
         print(f"Procurando nonce no range ({start}, {end}): {nonce}")                             
         nonce_bytes = nonce.to_bytes(4, byteorder='big')         
         entrada_hash = nonce_bytes + transacao.encode('utf-8')  
@@ -86,7 +95,7 @@ def process_nonce(dados) -> tuple:
 
 # Envia um solicitação de transação ao servidor
 def request_transaction(tcp_sock, client_name):
-    global ultima_mensagem
+    global ultima_mensagem, parar_mineracao
 
     while True:
 
@@ -116,6 +125,7 @@ def request_transaction(tcp_sock, client_name):
         
 
         if type == 'T': 
+            parar_mineracao = False # Reseta a variável para nova transação
             id_transacao, nonce_encontrado = process_nonce(dados)
 
             if nonce_encontrado is not None:
@@ -135,8 +145,8 @@ def request_transaction(tcp_sock, client_name):
             print(f">>>>>>> Seu nonce foi rejeitado para a transação {id_transacao}. <<<<<<<")
 
         elif type == 'I':
-            print(f"Um outro cliente encontrou um nonce para a transação {id_transacao}. Abortando tentativa atual...")
-            print("[INFO] Processamento interrompido.")
+            print(f"Um outro cliente encontrou um nonce para a transação {id_transacao}. [I] Abortando tentativa atual...")
+            parar_mineracao = True # Define a variável para parar a mineração
         else:
             print("[ERRO] Dados recebidos são insuficientes para extrair type.")
 

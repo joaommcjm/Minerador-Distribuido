@@ -114,6 +114,7 @@ def process_request(my_conn, my_addr, type):
     #print("--------------------\n")
     
     global client_name
+    global clientes
 
     #try:
         # Verifica se é um pedido de transação
@@ -127,8 +128,19 @@ def process_request(my_conn, my_addr, type):
     elif type == b'S':
         num_transacao = my_conn.recv(2)
         nonce = my_conn.recv(4)
-        processar_nonce(num_transacao, nonce, client_name)
-            
+        
+        if processar_nonce(num_transacao, nonce, client_name):
+            print(f"[INFO] Cliente {client_name} encontrou nonce válido para a transação {int.from_bytes(num_transacao, 'big')}.")
+            # Registrar qual cliente encontrou o nonce primeiro
+            transacoes_validas[num_transacao] = client_name
+
+# Notificar os outros clientes
+        for nome, cliente in clientes.items():
+            if cliente != my_conn:
+                    cliente.sendall(b'I' + num_transacao)
+            else:
+                    my_conn.sendall(b'R'+ num_transacao)
+
     elif type == b'V':
         num_transacao = my_conn.recv(2)
         print(f"[INFO] Transação {int.from_bytes(num_transacao, 'big')} validada.")
@@ -226,7 +238,7 @@ def process_client(my_conn, my_addr):
     #thread_atual = threading.current_thread()  # Obtém a thread atual
     #print(f"Executando na thread: {thread_atual.name} (ID: {thread_atual.ident})")
     #print(f'Novo cliente conectado: {my_addr}!')
-    #print("--------------------\n")
+    ("--------------------\n")
     
     all_conn.append(my_conn)                        # Adiciona o cliente à lista de conexões
     
