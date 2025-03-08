@@ -9,8 +9,10 @@ porta = 31471
 
 # Variável global para armazenar mensagens do servidor
 ultima_mensagem = None
-lock = threading.Lock()  # Controle de acesso à variável compartilhada
 parar_mineracao = False
+serverIsRunning = True
+lock = threading.Lock()  # Controle de acesso à variável compartilhada
+
 
 # Função para requisitar o nome do cliente
 def get_client_name():
@@ -26,9 +28,9 @@ def get_client_name():
 
 # Thread que escuta mensagens do servidor e atualiza a ultima mensagem
 def listen_server(tcp_sock):
-    global ultima_mensagem, parar_mineracao
+    global ultima_mensagem, parar_mineracao, serverIsRunning
 
-    while True:
+    while serverIsRunning:
         try:
             dados = tcp_sock.recv(1024)
             if not dados:
@@ -43,23 +45,27 @@ def listen_server(tcp_sock):
                     ultima_mensagem = dados
 
                 # Servidor responde protocolo W (não há transações disponíveis)
-                if type == b'W':  
+                elif type == b'W':  
                     print("[INFO] Nenhuma transação disponível. Aguardando...")
                 
                 # Servidor responde protocolo V, nonce validado.
-                if type == b'V':
+                elif type == b'V':
                     print(f"[INFO] Seu nonce foi validado para a transação {int.from_bytes(dados[1:3], 'big')}.")
 
                 # Servidor informa que outro cliente encontrou o nonce
-                if type == b'I':
+                elif type == b'I':
                     print(f"[INFO] Outro cliente encontrou o nonce para a transação {int.from_bytes(dados[1:3], 'big')}.")
                     parar_mineracao = True
 
                 # Servidor informa que o nonce recebido é inválido
                 elif type == b'R':
                     print(f"[INFO] Seu nonce foi rejeitado para a transação {int.from_bytes(dados[1:3], 'big')}.")
-
-
+                
+                # Servidor informa que está escerrando
+                elif type == b'Q':
+                    print(f"[INFO] Servidor encerrando conexão.")
+                    serverIsRunning = False
+                    break
 
         except Exception as e:
             print(f"[ERRO] Falha ao receber mensagem do servidor: {e}")
@@ -68,9 +74,9 @@ def listen_server(tcp_sock):
 
 # Envia um solicitação de transação ao servidor
 def request_transaction(tcp_sock, client_name):
-    global ultima_mensagem, parar_mineracao
+    global ultima_mensagem, parar_mineracao, serverIsRunning
 
-    while True:
+    while serverIsRunning:
 
         # Envia um pedido de transação (protocolo G)
         msg = f"G{client_name}".encode("utf-8")
@@ -99,6 +105,8 @@ def request_transaction(tcp_sock, client_name):
         time.sleep(10)
 # Processa os dados da transação recebida e realiza a prova de trabalho (mineração).
 def process_nonce(dados) -> tuple:
+    
+    global serverIsRunning
 
     # Decodifica os bytes de acordo com o protocolo
     id_transacao = int.from_bytes(dados[1:3], byteorder='big')      
@@ -122,9 +130,14 @@ def process_nonce(dados) -> tuple:
     end = start + 1000000
 
     for nonce in range(start, end):
+        
+        if not serverIsRunning:
+            print("[INFO] Mineração interrompida por notificação do servidor. [Q].")
+            return id_transacao, None    
         if parar_mineracao:
             print("[INFO] Mineração interrompida por notificação do servidor. [I].")
             return id_transacao, None
+
         
         print(f"Procurando nonce no range ({start}, {end}): {nonce}")                             
         nonce_bytes = nonce.to_bytes(4, byteorder='big')         
@@ -145,19 +158,35 @@ def startClient():
     try:
         tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tcp_sock.connect((host, porta))
+        return tcp_sock
     except Exception as e:
         print ("Falha na conexão ao servidor.")
         sys.exit(2)
     return tcp_sock
-        
+
+def shutdown_client(tcp_sock, thread_listen, thread_user_request):
+    global serverIsRunning
+    serverIsRunning = False
+
+    try:
+        tcp_sock.close()  # Fecha o socket para evitar bloqueios
+    except:
+        pass
+
+    print("[INFO] Cliente encerrado com sucesso.")
+    thread_listen.join()
+    thread_user_request.join()
+    print("[INFO] Cliente encerrado com sucesso.")
+    sys.exit(0)
 
 def main():
+
     client_name = get_client_name()
     tcp_sock = startClient()
 
     # Cria as threads
-    thread_listen = threading.Thread(target=listen_server, args=(tcp_sock,), daemon=True)
-    thread_user_request = threading.Thread(target=request_transaction, args=(tcp_sock, client_name), daemon=True)
+    thread_listen = threading.Thread(target=listen_server, args=(tcp_sock,))
+    thread_user_request = threading.Thread(target=request_transaction, args=(tcp_sock, client_name))
 
     print(f"Conectado em: {host, porta}")
 
@@ -165,10 +194,13 @@ def main():
         thread_listen.start()
         thread_user_request.start()
 
-        thread_listen.join()
-        thread_user_request.join()
-    except KeyboardInterrupt as e:
+        while serverIsRunning:
+            time.sleep(1)
+
+    except KeyboardInterrupt:
         print ("Finalizando por Ctrl-C.") 
+    finally:
+        shutdown_client(tcp_sock, thread_listen, thread_user_request)
 
 if __name__ == "__main__":
     main()

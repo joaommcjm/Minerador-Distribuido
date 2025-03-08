@@ -23,6 +23,7 @@ transacoes = {}
 transacoes_validas = {} 
 clientes = {}           
 tentativas = 0
+serverIsRunning = True
 lock = threading.Lock() 
 
 # Função para conectar ao Telegram e enviar requisições HTTP
@@ -241,6 +242,7 @@ def client(my_conn, my_addr):
                     # Processa o pedido do cliente
                 process_request(my_conn, my_addr, type)
     except:
+
         # Remove o cliente do dicionário de clientes
         client_name = None
         for name, conn in clientes.items():
@@ -250,10 +252,13 @@ def client(my_conn, my_addr):
         if client_name is not None:
             del clientes[client_name]
 
-        # Fecha a conexão
-        all_conn.remove(my_conn)
-        my_conn.close()
-        print(f"Cliente {my_addr} desconectado.") 
+        try:
+            all_conn.remove(my_conn)
+        except ValueError:
+            None
+        finally:
+            my_conn.close()  # Certifique-se de fechar a conexão corretamente
+            print(f"Conexão com o cliente {my_addr} encerrada.")
 
 # Verifica se ononce enviado pelo cliente é válido
 def processar_nonce(num_transacao, nonce, nome):
@@ -358,6 +363,28 @@ def startServer():
         sys.exit(2)
     return sock
 
+def shutdown_server():
+    global running
+    running = False
+    print("Encerrando o servidor...")
+
+    for conn in all_conn:
+        try:
+            conn.send(b'Q')
+            conn.close()
+        except:
+            pass
+
+    all_conn.clear()  # Limpa conexões ativas
+    print("Todas as conexões foram encerradas.")
+
+    for thread in all_threads:
+        thread.join()
+
+    print("Servidor desligado.")
+    sys.exit(0)
+
+
 # Interage ocm o servidor via comandos sdo usuário
 def interface_usuario(comando=None, chat_id=None):
     # Se a função é chamado com comando=None significa que ela foi chamada pelo servidor
@@ -371,6 +398,7 @@ def interface_usuario(comando=None, chat_id=None):
             print(f"| {'/validtrans':<15} | {'Mostra as transações já validadas.':<49} |")
             print(f"| {'/pendtrans':<15} | {'Mostra as transações pendentes.':<49} |")
             print(f"| {'/clients':<15} | {'Mostra os clientes e transações que validam.':<49} |")
+            print(f"| {'/quit':<15} | {'Desconecta todos os clientes e encerra o servidor.':<49} |")
             print("=" * 70)
             try:
                 comando = input("\nDigite um comando:\n>>>> ").strip().lower()
@@ -447,9 +475,14 @@ def processar_comando(comando, chat_id=None) -> str:
                         if transacoes_validando:
                             resposta += f"- {cliente} validando: {', '.join(transacoes_validando)}"
                         else:
-                            resposta += f"- {cliente}, sem transações."    
+                            resposta += f"- {cliente}, sem transações."
+        elif comando == "/quit":
+            if not chat_id:
+                shutdown_server()
+            else:
+                resposta = "Comando inválido para o telegram." 
         else:
-            resposta = "Comando inválido! Use: /newtrans, /validtrans, /pendtrans, /clients"
+            resposta = "Comando inválido! Use: /newtrans, /validtrans, /pendtrans, /clients, /quit"
     return resposta
 
 
@@ -469,7 +502,7 @@ def main():
     thread_telegram.start()
 
 
-    while True:
+    while serverIsRunning:
         try:
             conn, addr = sock.accept()
             thread_client = threading.Thread(target=client, args=(conn, addr))
