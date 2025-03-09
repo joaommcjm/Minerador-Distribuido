@@ -24,6 +24,7 @@ transacoes_validas = {}
 clientes = {}           
 tentativas = 0
 serverIsRunning = True
+continuar_processando = False
 lock = threading.Lock() 
 
 # Função para conectar ao Telegram e enviar requisições HTTP
@@ -132,7 +133,8 @@ def process_request(my_conn, my_addr, type):
     elif type == b'S':
         num_transacao = my_conn.recv(2)
         nonce = my_conn.recv(4)
-        processar_nonce(num_transacao, nonce, client_name)
+        with lock:
+            processar_nonce(num_transacao, nonce, client_name)
 
     elif type == b'R':
         num_transacao = my_conn.recv(2)
@@ -169,11 +171,8 @@ def gerar_transacoes(transacao, bits_zero):
 
 # Envia transação disponível para o cliente
 def enviar_transacao(conn, client_name):
-    #thread_atual = threading.current_thread()  # Obtém a thread atual
-    #print(f"Executando na thread: {thread_atual.name} (ID: {thread_atual.ident})")
-    #print("Enviando transação.")
 
-    global tentativas
+    global tentativas, continuar_processando
 
     with lock:
         
@@ -182,17 +181,26 @@ def enviar_transacao(conn, client_name):
             transacao_pendente = False
 
             for trans in transacoes:
-                clientes_validando = transacoes[trans]['clientes_validando']
-                if trans not in transacoes_validas and client_name not in clientes_validando:
-                    id_transacao = trans
-                    dados_transacao = transacoes[id_transacao]
-                    transacao_pendente = True
+                if trans not in transacoes_validas:
+                    clientes_validando = transacoes[trans]['clientes_validando']
+
+                    if len(clientes_validando) == len(clientes):
+                        print(f"[INFO] Reiniciando validação para transação {trans}.")
+                        transacoes[trans]['clientes_validando'] = [] 
+                        clientes_validando = []
+                    
+
+                    if client_name not in clientes_validando:
+                        id_transacao = trans
+                        dados_transacao = transacoes[id_transacao]
+                        transacao_pendente = True
 
 
-                    transacoes[id_transacao]['clientes_validando'].append(client_name)
-                    local_tentativas = tentativas
-                    tentativas += 1
-                    break
+                        transacoes[id_transacao]['clientes_validando'].append(client_name)
+                        local_tentativas = tentativas
+                        tentativas += 1
+                        continuar_processando = True
+                        break
             
 
             # Envia 'W' caso todas as transações já estejam validadas
@@ -216,8 +224,7 @@ def enviar_transacao(conn, client_name):
     
     # Adiciona o cliente no dicionario de transações
 
-    print(f"\nEnviando transação {id_transacao} para {client_name}.")
-    print("--------------------\n")
+    print(f"\nEnviando transação {id_transacao} para {client_name}.\n")
 
 
 
@@ -255,17 +262,19 @@ def client(my_conn, my_addr):
 
 # Verifica se ononce enviado pelo cliente é válido
 def processar_nonce(num_transacao, nonce, nome):
-    global tentativas
+    global tentativas, continuar_processando
+
+    if not continuar_processando:
+        return
 
     num_transacao = int.from_bytes(num_transacao, 'big')    # Obtém o ID da transação
     nonce = int.from_bytes(nonce, 'big')                    # Obtém o nonce enviado pelo cliente
     
-    with lock:
-        if num_transacao not in transacoes:
-            return  # Ignora se a transação não existir mais
+    if num_transacao not in transacoes:
+        return  # Ignora se a transação não existir mais
         
-        transacao = transacoes[num_transacao]['transacao']  # Obtém os dados da transação
-        bits_zero = transacoes[num_transacao]['bits_zero']  # Obtém o critério de bits zero
+    transacao = transacoes[num_transacao]['transacao']  # Obtém os dados da transação
+    bits_zero = transacoes[num_transacao]['bits_zero']  # Obtém o critério de bits zero
     
     entrada_hash = nonce.to_bytes(4, 'big') + transacao.encode('utf-8')
     resultado_hash = hashlib.sha256(entrada_hash).digest()  # Calcula o hash
@@ -273,18 +282,17 @@ def processar_nonce(num_transacao, nonce, nome):
     resultado_hash = bin(int.from_bytes(resultado_hash, 'big'))[2:].zfill(256)
     
     if resultado_hash.startswith('0' * bits_zero):
-        with lock:
-            transacoes_validas[num_transacao] = {'nonce': nonce, 'cliente': nome}  # Registra a transação validada
-            tentativas = 0
+        transacoes_validas[num_transacao] = {'nonce': nonce, 'cliente': nome}  # Registra a transação validada
+        tentativas = 0
+        continuar_processando = False
 
         print(f"\nNonce válido encontrado por {nome}: {nonce}")
         clientes[nome].send(b'V' + num_transacao.to_bytes(2, 'big')) # Informa ao cliente que o nonce foi validado
-        with lock:
-            for outro_nome, conexao in clientes.items():  # Notifica os outros clientes
-
-                if outro_nome != nome:
-                    print(f"Enviando I para {outro_nome}")
-                    conexao.send(b'I' + num_transacao.to_bytes(2, 'big'))   # 'I' indica que outro cliente validou
+        
+        for outro_nome, conexao in clientes.items():  # Notifica os outros clientes
+            if outro_nome != nome:
+                print(f"Enviando I para {outro_nome}")
+                conexao.send(b'I' + num_transacao.to_bytes(2, 'big'))   # 'I' indica que outro cliente validou
             
     else:
         if nome in clientes:
@@ -402,7 +410,7 @@ def interface_usuario(comando=None, chat_id=None):
                 if resposta != "":
                     print("------------------------------------------------------------")
                     print(f"{resposta}")
-                    print("------------------------------------------------------------\n")
+                    print("\n------------------------------------------------------------\n")
             except Exception as e:  # Captura outros erros genéricos
                 None
                 #print(f"\n[ERRO]: {e}")
@@ -441,6 +449,7 @@ def processar_comando(comando, chat_id=None) -> str:
                     print("Transações Validadas:")
                     for num, info in transacoes_validas.items():
                          resposta += f"- ID {num}: Nonce {info['nonce']}, Validado por {info['cliente']}"
+                         
 
         elif comando == "/pendtrans":
                 if not transacoes:
