@@ -79,7 +79,7 @@ def request_transaction(tcp_sock, client_name):
     while serverIsRunning:
 
         # Envia um pedido de transação (protocolo G)
-        msg = f"G{client_name}".encode("utf-8")
+        msg = b'G' + client_name.encode("utf-8")
         tcp_sock.sendall(msg)
         print(f"[INFO] Solicitação de transação enviada: {msg.decode()}")
 

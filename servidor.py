@@ -133,16 +133,7 @@ def process_request(my_conn, my_addr, type):
         num_transacao = my_conn.recv(2)
         nonce = my_conn.recv(4)
         processar_nonce(num_transacao, nonce, client_name)
-            
-    elif type == b'V':
-        num_transacao = my_conn.recv(2)
-        print(f"[INFO] Transação {int.from_bytes(num_transacao, 'big')} validada.")
-        
-        transacoes_validas[num_transacao] = client_name
-        
-        global tentativas
-        tentativas = 0
-        # Enviar broadcast aqui
+
     elif type == b'R':
         num_transacao = my_conn.recv(2)
         print(f"[INFO] Transação {int.from_bytes(num_transacao, 'big')} rejeitada.")
@@ -191,10 +182,12 @@ def enviar_transacao(conn, client_name):
             transacao_pendente = False
 
             for trans in transacoes:
-                if trans not in transacoes_validas.keys():
+                clientes_validando = transacoes[trans]['clientes_validando']
+                if trans not in transacoes_validas and client_name not in clientes_validando:
                     id_transacao = trans
                     dados_transacao = transacoes[id_transacao]
                     transacao_pendente = True
+
 
                     transacoes[id_transacao]['clientes_validando'].append(client_name)
                     local_tentativas = tentativas
@@ -223,7 +216,7 @@ def enviar_transacao(conn, client_name):
     
     # Adiciona o cliente no dicionario de transações
 
-    print(f"\nEnviando transação: \n{resposta}")
+    print(f"\nEnviando transação {id_transacao} para {client_name}.")
     print("--------------------\n")
 
 
@@ -262,6 +255,7 @@ def client(my_conn, my_addr):
 
 # Verifica se ononce enviado pelo cliente é válido
 def processar_nonce(num_transacao, nonce, nome):
+    global tentativas
 
     num_transacao = int.from_bytes(num_transacao, 'big')    # Obtém o ID da transação
     nonce = int.from_bytes(nonce, 'big')                    # Obtém o nonce enviado pelo cliente
@@ -281,20 +275,21 @@ def processar_nonce(num_transacao, nonce, nome):
     if resultado_hash.startswith('0' * bits_zero):
         with lock:
             transacoes_validas[num_transacao] = {'nonce': nonce, 'cliente': nome}  # Registra a transação validada
+            tentativas = 0
 
         print(f"\nNonce válido encontrado por {nome}: {nonce}")
-        clientes[nome].send(f"V{num_transacao}".encode('utf-8'))  # Informa ao cliente que o nonce foi validado
+        clientes[nome].send(b'V' + num_transacao.to_bytes(2, 'big')) # Informa ao cliente que o nonce foi validado
         with lock:
             for outro_nome, conexao in clientes.items():  # Notifica os outros clientes
 
                 if outro_nome != nome:
                     print(f"Enviando I para {outro_nome}")
-                    conexao.send(f"I{num_transacao}".encode('utf-8'))  # 'I' indica que outro cliente validou
+                    conexao.send(b'I' + num_transacao.to_bytes(2, 'big'))   # 'I' indica que outro cliente validou
             
     else:
         if nome in clientes:
             print(f"Enviando R para {nome}")
-            clientes[nome].send(f"R{num_transacao}".encode('utf-8'))  # 'R' indica rejeição do nonce
+            clientes[nome].send(b'R' + num_transacao.to_bytes(2, 'big'))  # 'R' indica rejeição do nonce
 
 
 # Obtém o último update_id do Telegram para evitar processamento de mensagens antigas
