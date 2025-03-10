@@ -25,7 +25,11 @@ clientes = {}
 tentativas = 0
 serverIsRunning = True
 continuar_processando = False
+
 lock = threading.Lock() 
+lock_process_nonce = threading.Lock()
+lock_transacoes = threading.Lock()
+lock_clientes = threading.Lock()
 
 # Função para conectar ao Telegram e enviar requisições HTTP
 def send_request_to_telegram(path):
@@ -111,16 +115,7 @@ def broadcast_message(my_conn, my_addr, msg):
 # Processa o pedido do cliente de acordo com o protocolo
 def process_request(my_conn, my_addr, type):
     
-    #thread_atual = threading.current_thread()  # Obtém a thread atual
-    #print(f"Executando na thread: {thread_atual.name} (ID: {thread_atual.ident})")
-    #print(f'Processando pedido: {my_addr}, {type}!')
-    #print("--------------------\n")
-    
-    global client_name
-    global clients
-
-    #try:
-        # Verifica se é um pedido de transação
+    # Verifica se é um pedido de transação
     if type == b'G':  
         client_name = my_conn.recv(10).decode("utf-8").strip()  # Captura os 10 bytes do nome
         clientes[client_name] = my_conn                         # Adiciona o cliente à lista de clientes
@@ -133,7 +128,10 @@ def process_request(my_conn, my_addr, type):
     elif type == b'S':
         num_transacao = my_conn.recv(2)
         nonce = my_conn.recv(4)
-        with lock:
+        with lock_process_nonce:
+            for nome, conn in clientes.items():
+                if conn == my_conn:
+                    client_name = nome
             processar_nonce(num_transacao, nonce, client_name)
 
     elif type == b'R':
@@ -153,8 +151,6 @@ def process_request(my_conn, my_addr, type):
     else:
         print(f"[ERRO] Tipo de requisição desconhecido de {my_addr}: {type}")
 
-    #except Exception as e:
-    #    print(f"[ERRO] Falha ao processar solicitação de {my_addr}: {e}")
 
 # Adiciona novas transações
 def gerar_transacoes(transacao, bits_zero):
@@ -173,44 +169,41 @@ def gerar_transacoes(transacao, bits_zero):
 def enviar_transacao(conn, client_name):
 
     global tentativas, continuar_processando
-
-    with lock:
         
-        # Verifica se existem transações
-        if transacoes:
-            transacao_pendente = False
+    # Verifica se existem transações
+    if not transacoes:
+        conn.send(b'W')  # Envia 'W' se não houver transações
+        return
+    
+    transacao_pendente = False
+    dados_transacao = None
+    id_transacao = None
 
-            for trans in transacoes:
-                if trans not in transacoes_validas:
-                    clientes_validando = transacoes[trans]['clientes_validando']
-
+    with lock_transacoes:
+        for trans in transacoes:
+            if trans not in transacoes_validas:
+                clientes_validando = transacoes[trans]['clientes_validando']
+                with lock_clientes:
                     if len(clientes_validando) == len(clientes):
                         print(f"[INFO] Reiniciando validação para transação {trans}.")
                         transacoes[trans]['clientes_validando'] = [] 
                         clientes_validando = []
-                    
-
-                    if client_name not in clientes_validando:
-                        id_transacao = trans
-                        dados_transacao = transacoes[id_transacao]
-                        transacao_pendente = True
-
-
-                        transacoes[id_transacao]['clientes_validando'].append(client_name)
-                        local_tentativas = tentativas
-                        tentativas += 1
-                        continuar_processando = True
-                        break
-            
-
-            # Envia 'W' caso todas as transações já estejam validadas
-            if not transacao_pendente:
-                conn.send(b'W')  
-                return
-        # Envia 'W' se não houver transações
-        else:
+                
+                if client_name not in clientes_validando:
+                    id_transacao = trans
+                    dados_transacao = transacoes[id_transacao]
+                    transacoes[id_transacao]['clientes_validando'].append(client_name)
+                    transacao_pendente = True
+                    local_tentativas = tentativas
+                    tentativas += 1
+                    continuar_processando = True
+                    break
+        
+        # Envia 'W' caso todas as transações já estejam validadas
+        if not transacao_pendente:
             conn.send(b'W')  
             return
+
 
     transacao = dados_transacao['transacao'].encode('utf-8')  
     resposta = bytearray(b'T')                          # 'T' indica que é uma transação
@@ -422,56 +415,56 @@ def interface_usuario(comando=None, chat_id=None):
 
 def processar_comando(comando, chat_id=None) -> str:
     resposta = ""
-    with lock:
-        if comando == "/newtrans":
-            # Se processar comando não é invocado pelo telegram
-            if not chat_id:
-                transacao = input("Digite a transação a validar: ").strip()
 
-                try:
-                    bits_zero = int(input("Número de bits zero necessários: ").strip())
-                except:
-                    resposta = "Número de bits zero inválido."
-                    return resposta
-                    
-
-                if transacao.isalpha() and type(bits_zero) == int:
+    if comando == "/newtrans":
+        # Se processar comando não é invocado pelo telegram
+        if not chat_id:
+            transacao = input("Digite a transação a validar: ").strip()
+            try:
+                bits_zero = int(input("Número de bits zero necessários: ").strip())
+            except:
+                resposta = "Número de bits zero inválido."
+                return resposta
+                
+            if transacao.isalpha() and type(bits_zero) == int:
+                with lock_transacoes:
                     gerar_transacoes(transacao, bits_zero)
-                else:
-                    resposta = "Nome da transação inválida."
-
             else:
-                resposta = "Comando inválido para o usuário Telegram."
-        elif comando == "/validtrans":
-                if not transacoes_validas:
-                    resposta = "Nenhuma transação validada ainda."
-                else:
-                    print("Transações Validadas:")
-                    for num, info in transacoes_validas.items():
-                         resposta += f"- ID {num}: Nonce {info['nonce']}, Validado por {info['cliente']}"
-                         
-
-        elif comando == "/pendtrans":
-                if not transacoes:
+                resposta = "Nome da transação inválida."
+        else:
+            resposta = "Comando inválido para o usuário Telegram."
+    elif comando == "/validtrans":
+        with lock_transacoes:
+            if not transacoes_validas:
+                resposta = "Nenhuma transação validada ainda."
+            else:
+                print("Transações Validadas:")
+                for num, info in transacoes_validas.items():
+                     resposta += f"- ID {num}: Nonce {info['nonce']}, Validado por {info['cliente']}"
+                     
+    elif comando == "/pendtrans":
+        with lock_transacoes:
+            if not transacoes:
+                resposta = "Nenhuma transação pendente."
+            else:
+                transacoes_pendentes = False
+                resposta = "Transações Pendentes:"
+                for num, info in transacoes.items():
+                    if num not in transacoes_validas:
+                        resposta += f"- ID {num}: {info['transacao']}, {info['bits_zero']} bits zero, Clientes validando: {info['clientes_validando']}"
+                        transacoes_pendentes = True
+                if not transacoes_pendentes:
                     resposta = "Nenhuma transação pendente."
-                else:
-                    transacoes_pendentes = False
-                    resposta = "Transações Pendentes:"
-                    for num, info in transacoes.items():
-                        if num not in transacoes_validas:
-                            resposta += f"- ID {num}: {info['transacao']}, {info['bits_zero']} bits zero, Clientes validando: {info['clientes_validando']}"
-                            transacoes_pendentes = True
-                    if not transacoes_pendentes:
-                        resposta = "Nenhuma transação pendente."
-
-        elif comando == "/clients":
-                # Checa se existem clientes
-                if not clientes:
-                    resposta = "Nenhum cliente conectado."
-                else:
-                    resposta = "Clientes Conectados:"
-                    for cliente in clientes.keys():  # Iterando sobre o dicionário de clientes
-                        transacoes_validando = []
+    elif comando == "/clients":
+        with lock_clientes:    
+            # Checa se existem clientes
+            if not clientes:
+                resposta = "Nenhum cliente conectado."
+            else:
+                resposta = "Clientes Conectados:"
+                for cliente in clientes.keys():  # Iterando sobre o dicionário de clientes
+                    transacoes_validando = []
+                    with lock_transacoes:
                         # Verificando se o cliente está validando alguma transação
                         for num, dados_transacao in transacoes.items():
                             if cliente in dados_transacao['clientes_validando']:
@@ -480,13 +473,14 @@ def processar_comando(comando, chat_id=None) -> str:
                             resposta += f"- {cliente} validando: {', '.join(transacoes_validando)}"
                         else:
                             resposta += f"- {cliente}, sem transações."
-        elif comando == "/quit":
-            if not chat_id:
-                shutdown_server()
-            else:
-                resposta = "Comando inválido para o telegram." 
+    elif comando == "/quit":
+        if not chat_id:
+            shutdown_server()
         else:
-            resposta = "Comando inválido! Use: /newtrans, /validtrans, /pendtrans, /clients, /quit"
+            resposta = "Comando inválido para o telegram." 
+    else:
+        resposta = "Comando inválido! Use: /newtrans, /validtrans, /pendtrans, /clients, /quit"
+
     return resposta
 
 
